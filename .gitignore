@@ -1,0 +1,32 @@
+# Node
+node_modules/
+npm-debug.log
+dist/
+build/
+
+# Node local installs in subfolders
+node-forwarder/node_modules/
+electron-app/node_modules/
+
+# Python
+venv/
+asr-backend/venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# audio / large files
+*.wav
+*.mp3
+*.ogg
+
+# env / secrets
+.env
+.env.local
+*.key

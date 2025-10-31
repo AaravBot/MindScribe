@@ -1,0 +1,11 @@
+{
+  "name": "mindscribe-forwarder",
+  "version": "0.1.0",
+  "main": "forwarder.js",
+  "scripts": {
+    "start": "node forwarder.js"
+  },
+  "dependencies": {
+    "ws": "^8.13.0"
+  }
+}

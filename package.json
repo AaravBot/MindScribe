@@ -1,0 +1,23 @@
+{
+  "name": "mindscribe",
+  "version": "1.0.0",
+  "description": "Real time meeting note taker (Electron + OpenAI)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AaravBot/mindscribe.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/AaravBot/mindscribe/issues"
+  },
+  "homepage": "https://github.com/AaravBot/mindscribe#readme",
+  "devDependencies": {
+    "electron": "^39.0.0"
+  }
+}
