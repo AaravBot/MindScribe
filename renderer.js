@@ -25,22 +25,26 @@ if (!stopCapture) {
 // simple logger
 function log(msg) {
   const time = new Date().toLocaleTimeString();
-  logEl.innerText = `[${time}] ${msg}\n` + logEl.innerText;
+  if (logEl) logEl.innerText = `[${time}] ${msg}\n` + logEl.innerText;
   console.log(msg);
 }
 
 // initial UI messages
 log('Renderer loaded successfully.');
-statusEl.innerText = 'Status: ready';
+if (statusEl) statusEl.innerText = 'Status: ready';
 
 // basic click handlers
-helloBtn.addEventListener('click', () => {
-  statusEl.innerText = 'Status: Hello clicked!';
-  log('Hello button clicked — renderer working.');
-});
-devToolsBtn.addEventListener('click', () => {
-  log('Open DevTools in main (or press Ctrl+Shift+I).');
-});
+if (helloBtn) {
+  helloBtn.addEventListener('click', () => {
+    if (statusEl) statusEl.innerText = 'Status: Hello clicked!';
+    log('Hello button clicked — renderer working.');
+  });
+}
+if (devToolsBtn) {
+  devToolsBtn.addEventListener('click', () => {
+    log('Open DevTools in main (or press Ctrl+Shift+I).');
+  });
+}
 
 // ---------------- WebSocket to forwarder ----------------
 let ws = null;
@@ -50,7 +54,7 @@ function connectWS() {
   ws.binaryType = 'arraybuffer';
 
   ws.onopen = () => {
-    statusEl.innerText = 'Status: connected to forwarder';
+    if (statusEl) statusEl.innerText = 'Status: connected to forwarder';
     log('Connected to forwarder WebSocket at ws://localhost:8765');
   };
 
@@ -70,15 +74,15 @@ function connectWS() {
   };
 
   ws.onclose = () => {
-    statusEl.innerText = 'Status: forwarder disconnected';
+    if (statusEl) statusEl.innerText = 'Status: forwarder disconnected';
     log('WebSocket closed');
     // try reconnect after a short delay
     setTimeout(connectWS, 2000);
   };
 
   ws.onerror = (e) => {
-    statusEl.innerText = 'Status: WS error';
-    log('WebSocket error: ' + (e.message || e));
+    if (statusEl) statusEl.innerText = 'Status: WS error';
+    log('WebSocket error: ' + (e && (e.message || e)));
     console.error(e);
   };
 }
@@ -104,31 +108,57 @@ function floatTo16BitPCM(float32){
 // Stop capture safely
 function stopCaptureFn(){
   try {
-    if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(t => t.stop());
+      mediaStream = null;
+    }
     if (processor) { processor.disconnect(); processor.onaudioprocess = null; processor = null; }
     if (sourceNode) { try { sourceNode.disconnect(); } catch(e){} sourceNode = null; }
     if (audioContext) { audioContext.close(); audioContext = null; }
-    statusEl.innerText = 'Status: stopped';
+    if (statusEl) statusEl.innerText = 'Status: stopped';
     log('Stopped capture.');
   } catch (err) {
-    log('Error stopping capture: ' + err.message || err);
+    log('Error stopping capture: ' + ((err && err.message) || err));
     console.error(err);
   }
 }
 
-// Build a small chooser UI listing desktop sources via preload
+// Wrapper that shows an alert on failure and keeps chooser available
+async function startCaptureFromSourceSafe(sourceId) {
+  try {
+    await startCaptureFromSource(sourceId);
+    return true;
+  } catch (err) {
+    const msg = (err && err.message) ? err.message : String(err);
+    console.error('startCaptureFromSource failed:', err);
+    log('startCaptureFromSource failed: ' + msg);
+    alert('Capture failed: ' + msg);
+    return false;
+  }
+}
+
+// Build a small chooser UI listing desktop sources via preload (safe + filtered)
 async function buildSourceChooserAndCapture() {
   try {
     if (!window.electronAPI || !window.electronAPI.getDesktopSources) {
       log('Desktop capture API not available. Make sure preload.js is loaded and contextBridge exposes electronAPI.');
+      alert('Desktop capture API not available. Restart app or check preload.js.');
       return;
     }
 
     const sources = await window.electronAPI.getDesktopSources();
     if (!sources || sources.length === 0) {
       log('No desktop sources available.');
+      alert('No desktop sources available.');
       return;
     }
+
+    // filter out any source whose name contains mindscribe/electron/devtools to avoid capturing our own window
+    const filteredSources = (sources || []).filter(s => {
+      const name = String(s.name || '').toLowerCase();
+      return !name.includes('mindscribe') && !name.includes('electron') && !name.includes('devtools');
+    });
+    const listToShow = filteredSources.length ? filteredSources : sources;
 
     // chooser overlay
     const chooser = document.createElement('div');
@@ -141,7 +171,7 @@ async function buildSourceChooserAndCapture() {
     chooser.style.zIndex = 9999;
     chooser.style.maxHeight = '50vh';
     chooser.style.overflowY = 'auto';
-    chooser.style.width = '360px';
+    chooser.style.width = '420px';
     chooser.style.boxShadow = '0 8px 24px rgba(0,0,0,0.15)';
 
     const title = document.createElement('div');
@@ -151,7 +181,7 @@ async function buildSourceChooserAndCapture() {
     chooser.appendChild(title);
 
     // list sources
-    sources.forEach(src => {
+    listToShow.forEach(src => {
       const row = document.createElement('div');
       row.style.display = 'flex';
       row.style.alignItems = 'center';
@@ -166,12 +196,12 @@ async function buildSourceChooserAndCapture() {
       const btn = document.createElement('button');
       btn.innerText = 'Select';
       btn.onclick = async () => {
-        try {
-          // remove chooser UI
+        // do NOT immediately remove chooser; keep it until startCaptureFromSource succeeds
+        const ok = await startCaptureFromSourceSafe(src.id);
+        if (ok) {
           if (chooser.parentElement) chooser.parentElement.removeChild(chooser);
-          await startCaptureFromSource(src.id);
-        } catch (err) {
-          log('Error starting capture: ' + (err.message || err));
+        } else {
+          // keep chooser so user can try a different source
         }
       };
 
@@ -188,32 +218,82 @@ async function buildSourceChooserAndCapture() {
 
     document.body.appendChild(chooser);
   } catch (err) {
-    log('Error while listing desktop sources: ' + (err.message || err));
+    log('Error while listing desktop sources: ' + ((err && err.message) || err));
     console.error(err);
+    alert('Error while listing desktop sources: ' + ((err && err.message) || err));
   }
 }
 
-// start capture for a chosen source id (uses preload API)
+// start capture for a chosen source id (renderer attempts legacy getUserMedia then falls back to getDisplayMedia)
 async function startCaptureFromSource(sourceId) {
   try {
-    statusEl.innerText = 'Status: capturing from selected source...';
+    if (statusEl) statusEl.innerText = 'Status: capturing from selected source...';
     log('Requesting stream for sourceId: ' + sourceId);
 
-    mediaStream = await window.electronAPI.getStreamForSource(sourceId);
+    // First try legacy chromeMediaSource constraint (some Electron/Chromium builds accept this)
+    let triedLegacy = false;
+    try {
+      triedLegacy = true;
+      const constraints = {
+        audio: {
+          mandatory: {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: sourceId
+          }
+        },
+        video: false
+      };
+      log('Attempting navigator.mediaDevices.getUserMedia with chromeMediaSource...');
+      mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      log('getUserMedia succeeded with chromeMediaSource.');
+    } catch (firstErr) {
+      log('getUserMedia (chromeMediaSource) failed: ' + ((firstErr && firstErr.message) || firstErr));
+      console.warn('getUserMedia (chromeMediaSource) failed:', firstErr);
+      // fallback below
+    }
+
+    // If legacy failed or returned no audio, try getDisplayMedia fallback
+    if (!mediaStream || mediaStream.getAudioTracks().length === 0) {
+      if (mediaStream) {
+        // stop incomplete stream
+        try { mediaStream.getTracks().forEach(t => t.stop()); } catch(e){}
+        mediaStream = null;
+      }
+      try {
+        log('Attempting navigator.mediaDevices.getDisplayMedia({ audio:true, video:true }) as fallback...');
+        const displayStream = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
+        if (displayStream && displayStream.getAudioTracks && displayStream.getAudioTracks().length > 0) {
+          mediaStream = displayStream;
+          log('getDisplayMedia succeeded and returned audio tracks.');
+        } else {
+          if (displayStream) displayStream.getTracks().forEach(t => t.stop());
+          throw new Error('getDisplayMedia returned no audio tracks.');
+        }
+      } catch (fallbackErr) {
+        log('getDisplayMedia fallback failed: ' + ((fallbackErr && fallbackErr.message) || fallbackErr));
+        console.error('Both getUserMedia and getDisplayMedia failed:', fallbackErr);
+        throw fallbackErr;
+      }
+    }
 
     if (!mediaStream) {
       statusEl.innerText = 'Status: capture failed (no stream)';
-      log('No mediaStream returned.');
-      return;
+      log('No mediaStream returned after attempts.');
+      throw new Error('No mediaStream returned after attempts.');
     }
 
-    audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+    // Create audio context and pipe audio to forwarder
+    try {
+      audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+    } catch (e) {
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+
     sourceNode = audioContext.createMediaStreamSource(mediaStream);
 
+    // Use ScriptProcessor to read audio frames
     processor = audioContext.createScriptProcessor(4096, 1, 1);
     sourceNode.connect(processor);
-    // do not connect processor to destination (avoid echo/playback)
-    // processor.connect(audioContext.destination);
 
     processor.onaudioprocess = (e) => {
       try {
@@ -227,19 +307,20 @@ async function startCaptureFromSource(sourceId) {
       }
     };
 
-    // stop automatically if user stops sharing
     mediaStream.getTracks().forEach(track => {
       track.onended = () => {
+        log('MediaStream track ended');
         stopCaptureFn();
       };
     });
 
-    statusEl.innerText = 'Status: capturing (streaming...)';
+    if (statusEl) statusEl.innerText = 'Status: capturing (streaming...)';
     log('Streaming audio to forwarder...');
   } catch (err) {
-    statusEl.innerText = 'Capture failed: ' + (err.message || err);
-    log('Capture failed: ' + (err.message || err));
+    if (statusEl) statusEl.innerText = 'Capture failed: ' + ((err && err.message) || err);
+    log('Capture failed: ' + ((err && err.message) || err));
     console.error(err);
+    throw err; // bubble up so chooser wrapper alerts user
   }
 }
 
